@@ -14,6 +14,8 @@ export default function DigitalDossier() {
     rollNo: '',
     email: '',
     phone: '',
+    selfReportedSkills: '',
+    preferredJobLocations: '',
     recruiterVisibility: true,
     emailAlerts: true,
     smsAlerts: false
@@ -26,6 +28,8 @@ export default function DigitalDossier() {
         rollNo: profile.rollNo || '',
         email: profile.email || '',
         phone: profile.phone || '',
+        selfReportedSkills: (profile.selfReportedSkills || []).join(', '),
+        preferredJobLocations: (profile.preferredJobLocations || []).join(', '),
         recruiterVisibility: profile.settings?.recruiterVisibility ?? true,
         emailAlerts: profile.settings?.emailAlerts ?? true,
         smsAlerts: profile.settings?.smsAlerts ?? false
@@ -51,13 +55,24 @@ export default function DigitalDossier() {
 
   const handleSaveProfile = async (event) => {
     event.preventDefault();
+    const commaSeparatedValues = (value) => [...new Set(
+      value
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean)
+    )];
+
     // Persist editable profile fields + settings to the backend.
-    await updateProfile({
+    const updatedProfile = await updateProfile({
       name: formData.name,
       rollNo: formData.rollNo,
       email: formData.email,
-      phone: formData.phone
+      phone: formData.phone,
+      selfReportedSkills: commaSeparatedValues(formData.selfReportedSkills),
+      preferredJobLocations: commaSeparatedValues(formData.preferredJobLocations)
     });
+    if (!updatedProfile) return;
+
     await updateSettings({
       recruiterVisibility: formData.recruiterVisibility,
       emailAlerts: formData.emailAlerts,
@@ -367,6 +382,16 @@ export default function DigitalDossier() {
               <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-body)' }}>
                 Registered Mobile
                 <input type="tel" value={formData.phone} onChange={(event) => setFormData({ ...formData, phone: event.target.value })} className="input-field" />
+              </label>
+              <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-body)' }}>
+                Self-Reported Skills
+                <input type="text" value={formData.selfReportedSkills} onChange={(event) => setFormData({ ...formData, selfReportedSkills: event.target.value })} placeholder="React, Python, SQL" className="input-field" />
+                <span style={{ display: 'block', marginTop: '0.25rem', fontSize: '0.72rem', fontWeight: 400, color: 'var(--text-muted)' }}>Separate multiple skills with commas.</span>
+              </label>
+              <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-body)' }}>
+                Preferred Job Locations
+                <input type="text" value={formData.preferredJobLocations} onChange={(event) => setFormData({ ...formData, preferredJobLocations: event.target.value })} placeholder="Bengaluru, Hyderabad, Remote" className="input-field" />
+                <span style={{ display: 'block', marginTop: '0.25rem', fontSize: '0.72rem', fontWeight: 400, color: 'var(--text-muted)' }}>Separate multiple locations with commas.</span>
               </label>
             </div>
           </div>
