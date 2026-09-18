@@ -2,7 +2,6 @@ import React from 'react';
 
 /**
  * Skill-Setu (Skill-सेतु) Brand Logo
- * Faithfully matches the user's reference image:
  * - Upper and lower saffron (#D9822B) brackets
  * - "Skill-सेतु" bilingual typography
  * - Hindi motto: "जहाँ हुनर मिले अवसर से"

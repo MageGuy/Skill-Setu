@@ -457,7 +457,7 @@ export default function DigitalDossier() {
             </div>
 
             <div style={{ fontSize: '0.75rem', color: 'var(--success)', fontWeight: 600 }}>
-              &check; Digitally Signed Credential
+              ✓ Digitally Signed Credential
             </div>
 
             <button
