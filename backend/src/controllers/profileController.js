@@ -26,6 +26,28 @@ const EDITABLE_FIELDS = [
 ];
 
 const SETTINGS_FIELDS = ['autoSyncDigilocker', 'recruiterVisibility', 'emailAlerts', 'smsAlerts'];
+const LIST_FIELD_LIMITS = {
+  selfReportedSkills: { maxItems: 50, maxLength: 100 },
+  preferredJobLocations: { maxItems: 20, maxLength: 100 }
+};
+
+function normalizeProfileList(field, value) {
+  const { maxItems, maxLength } = LIST_FIELD_LIMITS[field];
+  if (!Array.isArray(value)) {
+    return { error: `${field} must be an array of non-empty strings.` };
+  }
+
+  if (value.some((item) => typeof item !== 'string' || !item.trim() || item.trim().length > maxLength)) {
+    return { error: `${field} must contain only non-empty strings of at most ${maxLength} characters.` };
+  }
+
+  const normalized = [...new Set(value.map((item) => item.trim()))];
+  if (normalized.length > maxItems) {
+    return { error: `${field} cannot contain more than ${maxItems} values.` };
+  }
+
+  return { value: normalized };
+}
 
 // GET /api/profile/me
 const getMyProfile = asyncHandler(async (req, res) => {
@@ -34,9 +56,18 @@ const getMyProfile = asyncHandler(async (req, res) => {
 
 // PATCH /api/profile/me
 const updateMyProfile = asyncHandler(async (req, res) => {
+  const normalizedLists = {};
+  for (const field of Object.keys(LIST_FIELD_LIMITS)) {
+    if (req.body[field] !== undefined) {
+      const result = normalizeProfileList(field, req.body[field]);
+      if (result.error) return res.status(400).json({ message: result.error });
+      normalizedLists[field] = result.value;
+    }
+  }
+
   EDITABLE_FIELDS.forEach((field) => {
     if (req.body[field] !== undefined) {
-      req.user[field] = req.body[field];
+      req.user[field] = normalizedLists[field] || req.body[field];
     }
   });
 

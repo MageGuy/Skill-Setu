@@ -78,10 +78,10 @@ const userSchema = new mongoose.Schema(
 
     // Free-text list of skills the student already has (self-reported at
     // signup). Merged with server-verified skills for AI personalization.
-    selfReportedSkills: [{ type: String, trim: true }],
+    selfReportedSkills: [{ type: String, trim: true, maxlength: 100 }],
 
     // Preferred job locations for AI matching
-    preferredJobLocations: [{ type: String, trim: true }],
+    preferredJobLocations: [{ type: String, trim: true, maxlength: 100 }],
 
     settings: {
       type: {
