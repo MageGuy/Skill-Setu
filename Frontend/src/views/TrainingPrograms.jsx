@@ -29,10 +29,13 @@ export default function TrainingPrograms() {
     setAnalyzing(true);
     const result = await runProgramAiAnalysis(id);
     if (result) {
-      setSelectedProgram(result.program);
+      const program = await fetchTrainingProgram(id);
+      if (program) {
+        setSelectedProgram(program);
+      }
     }
     setAnalyzing(false);
-  }, [runProgramAiAnalysis]);
+  }, [fetchTrainingProgram, runProgramAiAnalysis]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
@@ -142,7 +145,7 @@ export default function TrainingPrograms() {
                 <div className="card" style={{ padding: '1.5rem' }}>
                   <span className="material-symbols-outlined" style={{ fontSize: '28px', color: 'var(--saffron)' }}>trending_up</span>
                   <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--text-main)', marginTop: '0.5rem' }}>
-                    {selectedProgram.impactMetrics?.techAlignmentScore !== null
+                    {selectedProgram.impactMetrics?.techAlignmentScore != null
                       ? `${selectedProgram.impactMetrics.techAlignmentScore}/100`
                       : '—'}
                   </div>

@@ -44,13 +44,16 @@ const discoverJobs = asyncHandler(async (req, res) => {
 
   const rawResult = await discoverJobsForSkills(skills, location);
 
-  // Handle both shapes: z-ai returns a bare array, Gemini returns { jobs, insight }
+  // The service always returns normalized jobs, while retaining this shape
+  // handling for compatibility with older AI service implementations.
   const jobs = Array.isArray(rawResult) ? rawResult : (rawResult.jobs || []);
   const insight = !Array.isArray(rawResult) ? (rawResult.insight || '') : '';
+  const providerError = !Array.isArray(rawResult) ? (rawResult.providerError || '') : '';
 
   res.json({
     jobs,
     insight,
+    providerError,
     searchedSkills: skills.map((s) => s.name),
     location,
     count: jobs.length
