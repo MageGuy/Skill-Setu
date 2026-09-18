@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useApp } from '../context/AppContext';
 
 export default function JobMatching() {
-  const { campusDrives, applyForDrive, activeJobModal, setActiveJobModal, profile, discoverJobs, showToast } = useApp();
+  const { campusDrives, applyForDrive, activeJobModal, setActiveJobModal, profile, discoverJobs } = useApp();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [minMatch, setMinMatch] = useState(0);
@@ -11,6 +11,7 @@ export default function JobMatching() {
   // main listing). Loaded automatically on first mount.
   const [aiJobs, setAiJobs] = useState([]);
   const [aiInsight, setAiInsight] = useState('');
+  const [providerError, setProviderError] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState(null);
   const [location, setLocation] = useState('');
@@ -32,6 +33,7 @@ export default function JobMatching() {
     } else {
       setAiJobs(result.jobs || []);
       setAiInsight(result.insight || '');
+      setProviderError(result.providerError || '');
     }
     setAiLoading(false);
   }, [discoverJobs, location, profile]);
@@ -117,10 +119,16 @@ export default function JobMatching() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
           <div>
             <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-main)' }}>AI-Discovered Job Postings</h2>
-            <p style={{ fontSize: '0.825rem', color: 'var(--text-muted)' }}>Live openings matched to your skills on LinkedIn, Naukri, Indeed, and more.</p>
+            <p style={{ fontSize: '0.825rem', color: 'var(--text-muted)' }}>Provider listings matched to your skills, with search links when live access is unavailable.</p>
           </div>
           {aiLoading && <span className="badge badge-info">Searching the web…</span>}
         </div>
+
+        {providerError && (
+          <div className="card" style={{ padding: '0.85rem 1rem', marginBottom: '1rem', borderColor: 'var(--warning-border, #FCD34D)', color: 'var(--text-body)', fontSize: '0.825rem' }}>
+            {providerError}
+          </div>
+        )}
 
         {!aiLoading && aiJobs.length === 0 && !aiError && (
           <div className="card" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
@@ -128,16 +136,29 @@ export default function JobMatching() {
           </div>
         )}
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: '1rem' }}>
-          {aiJobs.map((job, i) => (
-            <a key={i} href={job.url} target="_blank" rel="noopener noreferrer" className="card" style={{ padding: '1.25rem', textDecoration: 'none', color: 'inherit', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 320px), 1fr))', gap: '1rem' }}>
+          {aiJobs.map((job) => (
+            <a key={job.id || job.url} href={job.url} target="_blank" rel="noopener noreferrer" className="card" style={{ padding: '1.25rem', textDecoration: 'none', color: 'inherit', display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
-                <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-main)', lineHeight: 1.3 }}>{job.title}</h3>
-                <span className="badge badge-neutral" style={{ fontSize: '0.65rem', flexShrink: 0 }}>{job.source}</span>
+                <div>
+                  <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-main)', lineHeight: 1.3 }}>{job.title}</h3>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>{job.company}</div>
+                </div>
+                <span className={`badge ${job.isFallback ? 'badge-warning' : 'badge-neutral'}`} style={{ fontSize: '0.65rem', flexShrink: 0 }}>{job.isFallback ? 'Search link' : job.source}</span>
               </div>
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.5, flex: 1 }}>{job.snippet}</p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem 0.75rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                <span>{job.location || 'Location not listed'}</span>
+                <span>{job.employmentType || 'Type not specified'}</span>
+                {job.salary && <span>{job.salary}</span>}
+              </div>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.5, flex: 1, margin: 0 }}>{job.description || 'No description provided.'}</p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+                <span className="badge badge-info" style={{ fontSize: '0.68rem' }}>{job.matchPercentage ?? 0}% Match</span>
+                {(job.matchedSkills || []).map((skill) => <span key={`match-${skill}`} className="badge badge-success" style={{ fontSize: '0.68rem' }}>&check; {skill}</span>)}
+                {(job.missingSkills || []).map((skill) => <span key={`missing-${skill}`} className="badge badge-warning" style={{ fontSize: '0.68rem' }}>Gap: {skill}</span>)}
+              </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '0.5rem', borderTop: '1px solid var(--border-subtle)' }}>
-                <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>{job.date ? fmtDate(job.date) : ''}</span>
+                <span style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>{job.postedDate ? `Posted ${fmtDate(job.postedDate)}` : 'Date not listed'} · {job.source}</span>
                 <span style={{ fontSize: '0.78rem', color: 'var(--secondary)', fontWeight: 600 }}>View posting →</span>
               </div>
             </a>

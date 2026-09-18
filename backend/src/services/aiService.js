@@ -108,59 +108,181 @@ Respond with JSON only.`;
 }
 
 // ---------------------------------------------------------------------------
-// 2. Job Discovery via Web Search
+// 2. Job Discovery via a configured provider
 // ---------------------------------------------------------------------------
-// Gemini doesn't have a built-in web search function like z-ai does, so we
-// return a curated set of job-board search URLs based on the student's skills.
-// The student can click through to see live results on LinkedIn/Naukri/Indeed.
 
-async function discoverJobsForSkills(skills, location = 'India') {
-  const skillNames = skills.map((s) => s.name);
+const JOB_CACHE_TTL_MS = 5 * 60 * 1000;
+const JOB_RESULT_LIMIT = 20;
+const jobCache = new Map();
 
-  // Build search-URL-based results — these always work and don't require
-  // a live web-search API.
+function cleanText(value, maxLength = 2000) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
+}
+
+function validHttpUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : '';
+  } catch {
+    return '';
+  }
+}
+
+function normalizedJobKey(job) {
+  const normalize = (value) => cleanText(value, 200).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  return job.url || `${normalize(job.title)}|${normalize(job.company)}`;
+}
+
+function matchJobToSkills(job, skills) {
+  const searchableText = `${job.title} ${job.description}`
+    .toLowerCase()
+    .replace(/[^a-z0-9+#.]+/g, ' ')
+    .replace(/[.#]+/g, ' ');
+  const matchedSkills = [];
+  const missingSkills = [];
+
+  skills.forEach((skill) => {
+    const name = cleanText(skill.name, 80);
+    if (!name) return;
+    const normalizedName = name.toLowerCase().replace(/[^a-z0-9+#.]+/g, ' ').replace(/[.#]+/g, ' ').trim();
+    const matched = Boolean(normalizedName) && searchableText.includes(normalizedName);
+    (matched ? matchedSkills : missingSkills).push(name);
+  });
+
+  const matchPercentage = skills.length
+    ? Math.round((matchedSkills.length / skills.length) * 100)
+    : 0;
+  return { matchPercentage, matchedSkills, missingSkills };
+}
+
+function normalizeJob(raw, skills, source) {
+  const job = {
+    title: cleanText(raw?.title || raw?.name || 'Untitled job', 180),
+    company: cleanText(raw?.company?.display_name || raw?.company?.name || raw?.company || 'Company not listed', 160),
+    location: cleanText(raw?.location?.display_name || raw?.location?.name || raw?.location || 'Location not listed', 160),
+    description: cleanText(raw?.description || raw?.snippet || raw?.summary || '', 2400),
+    url: validHttpUrl(raw?.redirect_url || raw?.url || raw?.link),
+    source: cleanText(raw?.source || source || 'Job provider', 80),
+    postedDate: cleanText(raw?.created || raw?.postedDate || raw?.date || '', 80),
+    employmentType: cleanText(raw?.contract_type || raw?.employmentType || raw?.job_type || 'Not specified', 80),
+    salary: cleanText(raw?.salary || (raw?.salary_min || raw?.salary_max
+      ? `${raw.salary_min || ''}${raw.salary_min && raw.salary_max ? ' - ' : ''}${raw.salary_max || ''} ${raw.salary_currency || ''}`
+      : ''), 120)
+  };
+
+  if (!job.url || !job.title) return null;
+  return { id: cleanText(raw?.id || job.url, 200), ...job, ...matchJobToSkills(job, skills) };
+}
+
+function fallbackJobs(skills, location) {
+  const skillNames = skills.map((skill) => cleanText(skill.name, 80)).filter(Boolean);
+  const query = skillNames.slice(0, 3).join(' ') || 'technology';
+  const encodedQuery = encodeURIComponent(query);
+  const encodedLocation = encodeURIComponent(cleanText(location, 100) || 'India');
   const boards = [
-    {
-      source: 'LinkedIn',
-      buildUrl: (q, loc) => `https://www.linkedin.com/jobs/search/?keywords=${encodeURIComponent(q)}&location=${encodeURIComponent(loc)}`
-    },
-    {
-      source: 'Naukri',
-      buildUrl: (q, loc) => `https://www.naukri.com/${encodeURIComponent(q)}-jobs-in-${encodeURIComponent(loc)}`
-    },
-    {
-      source: 'Indeed',
-      buildUrl: (q, loc) => `https://www.indeed.co.in/jobs?q=${encodeURIComponent(q)}&l=${encodeURIComponent(loc)}`
-    },
-    {
-      source: 'Foundit',
-      buildUrl: (q, loc) => `https://www.foundit.in/srp/results?query=${encodeURIComponent(q)}&searchId=&searchType=&experience=&location=${encodeURIComponent(loc)}`
-    }
+    ['LinkedIn', `https://www.linkedin.com/jobs/search/?keywords=${encodedQuery}&location=${encodedLocation}`],
+    ['Naukri', `https://www.naukri.com/${encodedQuery}-jobs-in-${encodedLocation}`],
+    ['Indeed', `https://www.indeed.co.in/jobs?q=${encodedQuery}&l=${encodedLocation}`],
+    ['Foundit', `https://www.foundit.in/srp/results?query=${encodedQuery}&location=${encodedLocation}`]
   ];
 
-  const query = skillNames.slice(0, 3).join(' ');
+  return boards.map(([source, url]) => {
+    const job = normalizeJob({
+      id: `fallback-${source.toLowerCase()}`,
+      title: `${skillNames.slice(0, 2).join(' / ') || 'Technology'} jobs on ${source}`,
+      company: source,
+      location,
+      description: `Search current ${query} openings in ${location} on ${source}.`,
+      url,
+      source,
+      postedDate: new Date().toISOString(),
+      employmentType: 'Search results'
+    }, skills, source);
+    return { ...job, isFallback: true };
+  });
+}
 
-  // Also ask Gemini for a 2-sentence market insight per skill set
-  let insight = '';
-  try {
-    const insightPrompt = `A candidate has these verified skills: ${skillNames.join(', ')}.
-They are looking for jobs in ${location}. In 2-3 sentences, give a brief market insight:
-which roles are they most likely to qualify for, and what's the current demand outlook?
-Respond with plain prose, no JSON.`;
-    insight = await generate(insightPrompt);
-  } catch {
-    insight = '';
+function providerConfig() {
+  const provider = (process.env.JOB_SEARCH_PROVIDER || '').trim().toLowerCase();
+  const apiKey = (process.env.JOB_SEARCH_API_KEY || '').trim();
+  const apiUrl = (process.env.JOB_SEARCH_API_URL || '').trim();
+  if (!provider || !apiKey || !apiUrl) return null;
+  return { provider, apiKey, apiUrl };
+}
+
+async function fetchProviderJobs(skills, location, config) {
+  const query = skills.map((skill) => cleanText(skill.name, 80)).filter(Boolean).slice(0, 8).join(' ');
+  const url = new URL(config.apiUrl);
+  let headers = { Accept: 'application/json' };
+
+  if (config.provider === 'adzuna') {
+    // Adzuna accepts app_id and app_key. JOB_SEARCH_API_KEY may be "id:key".
+    const [appId, appKey] = config.apiKey.includes(':') ? config.apiKey.split(':', 2) : ['', config.apiKey];
+    if (process.env.JOB_SEARCH_API_ID || appId) url.searchParams.set('app_id', process.env.JOB_SEARCH_API_ID || appId);
+    url.searchParams.set('app_key', appKey);
+    url.searchParams.set('what', query);
+    url.searchParams.set('where', cleanText(location, 100));
+    url.searchParams.set('results_per_page', String(JOB_RESULT_LIMIT));
+  } else {
+    url.searchParams.set('q', query);
+    url.searchParams.set('location', cleanText(location, 100));
+    headers = { ...headers, Authorization: `Bearer ${config.apiKey}` };
   }
 
-  const jobs = boards.map((b) => ({
-    title: `${skillNames.slice(0, 2).join(' / ')} jobs on ${b.source}`,
-    url: b.buildUrl(query, location),
-    snippet: `Live job postings for ${query} in ${location} on ${b.source}. Click to view current openings.`,
-    source: b.source,
-    date: new Date().toISOString()
-  }));
+  const response = await fetch(url, { headers, signal: AbortSignal.timeout(8000) });
+  if (!response.ok) throw new Error(`Job provider returned ${response.status}`);
+  const payload = await response.json();
+  const rows = Array.isArray(payload) ? payload : (payload.results || payload.jobs || payload.data || []);
+  if (!Array.isArray(rows)) throw new Error('Job provider returned an invalid result list');
+  return rows.map((row) => normalizeJob(row, skills, config.provider)).filter(Boolean);
+}
 
-  return { jobs, insight };
+async function discoverJobsForSkills(skills, location = 'India') {
+  const safeSkills = (Array.isArray(skills) ? skills : [])
+    .map((skill) => ({ name: cleanText(skill?.name, 80), score: Number(skill?.score) || 0 }))
+    .filter((skill) => skill.name);
+  const safeLocation = cleanText(location, 100) || 'India';
+  if (safeSkills.length === 0) return { jobs: [], insight: '', providerError: '' };
+
+  const cacheKey = JSON.stringify({ skills: safeSkills.map((skill) => skill.name.toLowerCase()).sort(), location: safeLocation.toLowerCase() });
+  const cached = jobCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+  const config = providerConfig();
+  let jobs;
+  let providerError = '';
+  if (config) {
+    try {
+      jobs = await fetchProviderJobs(safeSkills, safeLocation, config);
+    } catch (error) {
+      providerError = 'The configured job provider is temporarily unavailable. Showing search links instead.';
+      jobs = [];
+    }
+  } else {
+    providerError = 'No job provider is configured. Showing search links instead.';
+    jobs = [];
+  }
+
+  if (jobs.length === 0) jobs = fallbackJobs(safeSkills, safeLocation);
+  const uniqueJobsByKey = new Map();
+  jobs.forEach((job) => {
+    const key = normalizedJobKey(job);
+    const existing = uniqueJobsByKey.get(key);
+    if (!existing || (job.description.length + job.company.length) > (existing.description.length + existing.company.length)) {
+      uniqueJobsByKey.set(key, job);
+    }
+  });
+  const uniqueJobs = [...uniqueJobsByKey.values()].slice(0, JOB_RESULT_LIMIT);
+  let insight = '';
+  try {
+    insight = await generate(`A candidate has these verified skills: ${safeSkills.map((skill) => skill.name).join(', ')}.\nThey are looking for jobs in ${safeLocation}. In 2-3 sentences, give a brief market insight about likely roles and demand outlook. Respond with plain prose, no JSON.`);
+  } catch {
+    // Job results remain useful when Gemini is unavailable or rate-limited.
+  }
+
+  const value = { jobs: uniqueJobs, insight, providerError };
+  jobCache.set(cacheKey, { value, expiresAt: Date.now() + JOB_CACHE_TTL_MS });
+  return value;
 }
 
 // ---------------------------------------------------------------------------
@@ -260,6 +382,8 @@ Respond with JSON only. Use your training knowledge — you do not need to searc
 module.exports = {
   analyzeTrainingProgram,
   discoverJobsForSkills,
+  matchJobToSkills,
+  normalizeJob,
   discoverCoursesForGaps,
   analyzeTechTrends
 };

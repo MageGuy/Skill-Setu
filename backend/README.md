@@ -64,6 +64,30 @@ The API listens on `http://localhost:5000` by default. `FRONTEND_URL` in
 `.env` controls CORS — set it to wherever `npm run dev` serves the Vite
 frontend (default `http://localhost:5173`).
 
+### Live job discovery
+
+`POST /api/ai/discover-jobs` uses the candidate's verified and self-reported
+skills plus the requested location. To enable live results, create an Adzuna
+developer account and set these backend-only variables in `.env`:
+
+```dotenv
+JOB_SEARCH_PROVIDER=adzuna
+JOB_SEARCH_API_KEY=APP_ID:APP_KEY
+JOB_SEARCH_API_URL=https://api.adzuna.com/v1/api/jobs/in/search/1
+```
+
+Alternatively, `JOB_SEARCH_API_URL` can point to a compatible JSON provider that
+accepts `q` and `location` query parameters and bearer authentication. The API
+key is never sent to the frontend. Results are normalized, deduplicated, capped
+at 20, matched against the candidate skills, and cached for five minutes.
+
+If the provider variables are missing or the provider is unavailable, the
+endpoint returns clearly marked fallback search links for LinkedIn, Naukri,
+Indeed, and Foundit. Gemini market insight is optional and does not prevent job
+results from being returned when it is unavailable.
+
+Run the backend checks with `npm test`.
+
 ---
 
 ## 3. Auth model
